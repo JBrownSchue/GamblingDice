@@ -6,9 +6,6 @@ from gpiozero import OutputDevice
 # Dies muss zur Adresse passen, die i2cdetect gefunden hat (0x27)
 I2C_ADDRESS = 0x27
 I2C_PORT = 1
-lcd_power_port = OutputDevice(17)
-
-lcd_power_port.on()
 
 # --- LCD Initialisierung ---
 

@@ -2,19 +2,31 @@
 import random
 from gpiozero import OutputDevice
 from time import sleep, time
+from RPLCD.i2c import CharLCD  #
 
-# GPIO Pins für das 74HC595 Schieberegister
-SDI = OutputDevice(17)  # Serial Data Input
-RCLK = OutputDevice(18)  # Register Clock
-SRCLK = OutputDevice(27)  # Shift Register Clock
+# --- Konfiguration LCD ---
+I2C_ADDRESS = 0x27
+I2C_PORT = 1
 
-# Definition der sauberen Würfel-Punkte
-# Zeilen (Anoden): 0x04 (Reihe 3), 0x10 (Reihe 5), 0x40 (Reihe 7)
-# Spalten (Kathoden): 0xfb (Spalte 3), 0xef (Spalte 5), 0xbf (Spalte 7)
+# --- LCD Initialisierung ---
+try:
+    lcd = CharLCD(i2c_expander='PCF8574', address=I2C_ADDRESS, port=I2C_PORT,
+                  cols=16, rows=2, dotsize=8)
+    lcd.backlight_enabled = True
+except Exception as e:
+    print(f"LCD Fehler: {e}")
+    exit()
+
+# --- Konfiguration Matrix ---
+SDI = OutputDevice(17)
+RCLK = OutputDevice(18)
+SRCLK = OutputDevice(27)
+
+# Punkt-Definitionen für die Matrix
 P = {
-    'TL': (0x04, 0xfb), 'TR': (0x04, 0xbf),  # Top Left, Top Right
-    'ML': (0x10, 0xfb), 'MC': (0x10, 0xef), 'MR': (0x10, 0xbf),  # Mid Left, Center, Mid Right
-    'BL': (0x40, 0xfb), 'BR': (0x40, 0xbf)  # Bottom Left, Bottom Right
+    'TL': (0x04, 0xfb), 'TR': (0x04, 0xbf),
+    'ML': (0x10, 0xfb), 'MC': (0x10, 0xef), 'MR': (0x10, 0xbf),
+    'BL': (0x40, 0xfb), 'BR': (0x40, 0xbf)
 }
 
 DICE_PATTERNS = {
@@ -28,7 +40,6 @@ DICE_PATTERNS = {
 
 
 def hc595_shift(dat):
-    """ Schiebt 8 Bit in das Register. """
     for i in range(8):
         SDI.value = bool(0x80 & (dat << i))
         SRCLK.on()
@@ -36,45 +47,53 @@ def hc595_shift(dat):
 
 
 def update_display(row_data, col_data):
-    """ Sendet 16 Bit (Spalten dann Zeilen) und aktiviert sie. """
     hc595_shift(col_data)
     hc595_shift(row_data)
     RCLK.on()
-    sleep(0.0005)  # Sehr kurze Zeit für die LED
+    sleep(0.0005)
     RCLK.off()
 
 
 def show_number(number, duration):
-    """ Multiplexing: Zeigt die Punkte einer Zahl sehr schnell nacheinander. """
     start_time = time()
     while time() - start_time < duration:
         for row, col in DICE_PATTERNS[number]:
             update_display(row, col)
-            # Wichtig: Alles kurz ausschalten zwischen den Punkten gegen Geisterbilder
             update_display(0x00, 0xff)
 
 
-def roll_dice():
-    """ Verlangsamte Animation für das Ausrollen des Würfels. """
-    print("Würfel rollt...")
+def lcd_print(line1, line2=""):
+    """ Hilfsfunktion um Text auf Terminal und LCD zu spiegeln. """
+    print(f"{line1} {line2}")
+    lcd.clear()  #
+    lcd.cursor_pos = (0, 0)  #
+    lcd.write_string(line1)  #
+    if line2:
+        lcd.cursor_pos = (1, 0)  #
+        lcd.write_string(line2)  #
 
-    # Die Schritte werden immer langsamer (0.1s bis 0.6s)
+
+def roll_dice():
+    lcd_print("Wuerfel rollt...")
+
+    # Animation verlangsamen
     for speed in [0.1, 0.1, 0.2, 0.2, 0.3, 0.4, 0.6]:
         num = random.randint(1, 6)
         show_number(num, speed)
 
     final_num = random.randint(1, 6)
-    print(f"Ergebnis: {final_num}")
-    show_number(final_num, 5.0)  # Ergebnis für 5 Sekunden zeigen
+    lcd_print("Ergebnis:", f"Zahl {final_num}")
+    show_number(final_num, 5.0)
 
 
 def main():
-    print("Drücke Strg+C zum Beenden.")
+    lcd_print("GamblingDice", "Ready to roll!")
+    sleep(2)
     while True:
         roll_dice()
-        # Kurze Pause bevor der nächste automatische Wurf startet
+        lcd_print("Naechster Wurf", "in 2 Sek...")
         update_display(0x00, 0xff)
-        sleep(1.0)
+        sleep(2.0)
 
 
 if __name__ == '__main__':
@@ -82,4 +101,6 @@ if __name__ == '__main__':
         main()
     except KeyboardInterrupt:
         update_display(0x00, 0xff)
+        lcd.clear()  #
+        lcd.backlight_enabled = False  #
         print("\nProgramm beendet.")

@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 import random
-from gpiozero import OutputDevice
+from gpiozero import OutputDevice, Button
 from time import sleep, time
-from RPLCD.i2c import CharLCD  #
+from RPLCD.i2c import CharLCD
 
-# --- Konfiguration LCD ---
+# --- Konfiguration Hardware ---
+# LCD
 I2C_ADDRESS = 0x27
 I2C_PORT = 1
 
-# --- LCD Initialisierung ---
+# Schieberegister Matrix
+SDI = OutputDevice(17)
+RCLK = OutputDevice(18)
+SRCLK = OutputDevice(27)
+
+# Button an GPIO 23
+button = Button(23)
+
+# --- Initialisierung ---
 try:
     lcd = CharLCD(i2c_expander='PCF8574', address=I2C_ADDRESS, port=I2C_PORT,
                   cols=16, rows=2, dotsize=8)
@@ -17,12 +26,7 @@ except Exception as e:
     print(f"LCD Fehler: {e}")
     exit()
 
-# --- Konfiguration Matrix ---
-SDI = OutputDevice(17)
-RCLK = OutputDevice(18)
-SRCLK = OutputDevice(27)
-
-# Punkt-Definitionen für die Matrix
+# Punkt-Definitionen für die Matrix (wie zuvor)
 P = {
     'TL': (0x04, 0xfb), 'TR': (0x04, 0xbf),
     'ML': (0x10, 0xfb), 'MC': (0x10, 0xef), 'MR': (0x10, 0xbf),
@@ -39,6 +43,8 @@ DICE_PATTERNS = {
 }
 
 
+# --- Funktionen ---
+
 def hc595_shift(dat):
     for i in range(8):
         SDI.value = bool(0x80 & (dat << i))
@@ -46,7 +52,7 @@ def hc595_shift(dat):
         SRCLK.off()
 
 
-def update_display(row_data, col_data):
+def update_matrix(row_data, col_data):
     hc595_shift(col_data)
     hc595_shift(row_data)
     RCLK.on()
@@ -54,53 +60,80 @@ def update_display(row_data, col_data):
     RCLK.off()
 
 
-def show_number(number, duration):
+def show_dice_on_matrix(number, duration):
     start_time = time()
     while time() - start_time < duration:
         for row, col in DICE_PATTERNS[number]:
-            update_display(row, col)
-            update_display(0x00, 0xff)
+            update_matrix(row, col)
+            update_matrix(0x00, 0xff)
 
 
-def lcd_print(line1, line2=""):
-    """ Hilfsfunktion um Text auf Terminal und LCD zu spiegeln. """
-    print(f"{line1} {line2}")
-    lcd.clear()  #
-    lcd.cursor_pos = (0, 0)  #
-    lcd.write_string(line1)  #
+def lcd_msg(line1, line2=""):
+    lcd.clear()
+    lcd.cursor_pos = (0, 0)
+    lcd.write_string(line1)
     if line2:
-        lcd.cursor_pos = (1, 0)  #
-        lcd.write_string(line2)  #
+        lcd.cursor_pos = (1, 0)
+        lcd.write_string(line2)
 
 
-def roll_dice():
-    lcd_print("Wuerfel rollt...")
-
-    # Animation verlangsamen
-    for speed in [0.1, 0.1, 0.2, 0.2, 0.3, 0.4, 0.6]:
+def roll_animation():
+    """ Spielt die Animation und gibt eine Zufallszahl zurück. """
+    for speed in [0.1, 0.1, 0.15, 0.2, 0.3]:
         num = random.randint(1, 6)
-        show_number(num, speed)
+        show_dice_on_matrix(num, speed)
+    final = random.randint(1, 6)
+    return final
 
-    final_num = random.randint(1, 6)
-    lcd_print("Ergebnis:", f"Zahl {final_num}")
-    show_number(final_num, 5.0)
+
+def play_game():
+    scores = {1: 0, 2: 0}
+    max_rounds = 3
+
+    for round_num in range(1, max_rounds + 1):
+        for player in [1, 2]:
+            lcd_msg(f"Spieler {player} Drueck!", f"Runde {round_num}/{max_rounds}")
+            print(f"Spieler {player} ist am Zug...")
+
+            # Warten auf Button-Druck
+            button.wait_for_press()
+
+            # Würfeln
+            lcd_msg(f"Spieler {player}...", "Wuerfelt!")
+            result = roll_animation()
+            scores[player] += result
+
+            # Ergebnis anzeigen
+            lcd_msg(f"P{player} warf: {result}", f"Gesamt: {scores[player]}")
+            show_dice_on_matrix(result, 3.0)  # 3 Sek das Ergebnis auf Matrix lassen
+
+    # Spielende: Auswertung
+    lcd.clear()
+    if scores[1] > scores[2]:
+        winner_text = "S1 GEWINNT!"
+    elif scores[2] > scores[1]:
+        winner_text = "S2 GEWINNT!"
+    else:
+        winner_text = "UNENTSCHIEDEN!"
+
+    lcd_msg(winner_text, f"S1:{scores[1]}  S2:{scores[2]}")
+    print(f"Endergebnis: {winner_text} (S1: {scores[1]} | S2: {scores[2]})")
+    sleep(10)  # 10 Sekunden das Endergebnis zeigen
 
 
 def main():
-    lcd_print("GamblingDice", "Ready to roll!")
-    sleep(2)
     while True:
-        roll_dice()
-        lcd_print("Naechster Wurf", "in 2 Sek...")
-        update_display(0x00, 0xff)
-        sleep(2.0)
+        lcd_msg("Gambling Dice", "Button -> Start")
+        update_matrix(0x00, 0xff)
+        button.wait_for_press()
+        play_game()
 
 
 if __name__ == '__main__':
     try:
         main()
     except KeyboardInterrupt:
-        update_display(0x00, 0xff)
-        lcd.clear()  #
-        lcd.backlight_enabled = False  #
-        print("\nProgramm beendet.")
+        update_matrix(0x00, 0xff)
+        lcd.clear()
+        lcd.backlight_enabled = False
+        print("\nSpiel beendet.")

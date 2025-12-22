@@ -1,0 +1,4 @@
+gpiozero
+RPLCD
+smbus2
+rpi-lgpio
